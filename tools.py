@@ -44,15 +44,20 @@ def splitDateTime(dateTime):
     return timestamp, weekd, year, month, day, hour, minute, second
     
 # Used to import the train data from the .csv file
-def importTrainData(nrows=None, otherCols=False):
+def importTrainData(nrows=None, otherCols=False, quick=False):
     if otherCols:
         cols=["DATE","ASS_ASSIGNMENT","CSPL_RECEIVED_CALLS"]
+        toCat=["ASS_ASSIGNMENT"]
     else:
         cols = ["DATE","WEEK_END","DAY_WE_DS","TPER_TEAM","ASS_ASSIGNMENT","ASS_DIRECTORSHIP","CSPL_RECEIVED_CALLS"]
-    toCat = [ "DAY_WE_DS","TPER_TEAM", "ASS_ASSIGNMENT", "ASS_DIRECTORSHIP"]
-    chunks = read_csv("train_2011_2012_2013.csv",usecols= cols, chunksize=100000, sep=";")
-    frac = nrows/trainLines
-    dat = concat([chunk.sample(frac = frac) for chunk in chunks] )
+        toCat = [ "DAY_WE_DS","TPER_TEAM", "ASS_ASSIGNMENT", "ASS_DIRECTORSHIP"]
+    if quick : 
+        dat= read_csv("train_2011_2012_2013.csv",usecols= cols, nrows=nrows,sep=";")
+    else:
+        chunks = read_csv("train_2011_2012_2013.csv",usecols= cols, chunksize=100000, sep=";")
+        frac = nrows/trainLines
+        dat = concat([chunk.sample(frac = frac) for chunk in chunks] )
+    
     for col in toCat:
         dat[col]=dat[col].astype("category")
         
@@ -63,8 +68,7 @@ def importTrainData(nrows=None, otherCols=False):
 def importTestData():
     dat= read_csv("submission.txt",sep="\t")
     dat["ASS_ASSIGNMENT"] = dat["ASS_ASSIGNMENT"].astype("category")
-    return dat
-        
+    return dat 
 # Builds a dictionnary recording what directorship each service is assigned to
 #This function does not require the whole data, only the two relevant columns
 def getHierarchy(dat):
@@ -109,10 +113,6 @@ def uniqueID(timestamp,assignment):
     return hash(str(timestamp)+assignment)
     
 def pandasLinExEval(y_true,y_pred):
-    print(y_true.shape)
-    print(y_pred.shape)
-    print(y_true.max())
-    print(y_pred.max())
     alpha=0.1
     return ((alpha*(y_true-y_pred)).apply(math.exp) - alpha*(y_true-y_pred) -1).sum()
     
@@ -122,3 +122,23 @@ def linEx(true,pred):
 
 def selectNthComp(series,n):
     return series.apply(lambda x : x[n])
+    
+def previousMonth(year,month):
+    if month == 1 : 
+        return (year-1,12)
+    else:
+        return (year, month - 1)
+        
+def truncatePred(y_true,y_pred):
+    zFrac = y_true.value_counts()[0] / len(y_true)
+    rep = y_pred
+    thresh = rep.quantile(zFrac)
+    rep[rep < thresh] = 0
+    return rep
+    
+    
+def writeDict(dic,outfile):
+    out= open(outfile,'w')
+    towrite= str(dic)
+    out.write(towrite)
+    out.close()

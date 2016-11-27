@@ -5,7 +5,7 @@ Created on Mon Nov 21 18:46:29 2016
 
 @author: anog
 """
-from tools import splitDateTime, isWE, getShift, getHierarchy, uniqueID, sevenDays
+from tools import splitDateTime, isWE, getShift, getHierarchy, uniqueID, sevenDays, writeDict
 
 #Adds to the test data some date features already contained in the train data
 def makeDateFeatures(df) : 
@@ -18,6 +18,7 @@ def makeDateFeatures(df) :
 # However, as it directly adds the column to the test data, the whole dataframe must be given
 def makeDirFeature(testData,trainData):
     hierarchy = getHierarchy(trainData)
+    writeDict(hierarchy,"hierarchy.txt")
     testData["ASS_DIRECTORSHIP"]= testData["ASS_ASSIGNMENT"].apply(lambda x:hierarchy[x]).astype("category")
     testData["ASS_ASSIGNMENT"]=testData["ASS_ASSIGNMENT"].astype("category")
     

@@ -20,3 +20,12 @@ def returnDateDF(dateCol) :
         feat = cols[i]
         res[feat] = dateCol.apply(lambda x:splitDateTime(x)[i+1])
     return res
+    
+def lastWeekFeat(x,groupedFeature):
+    if x in groupedFeature.index : 
+        return groupedFeature["CSPL_RECEIVED_CALLS"][x]
+    else:
+        return 0
+
+def returnLastWeekFeatureVect(groupedFeature,UID7Col,newname):
+    return UID7Col.apply(lastWeekFeat,groupedFeature=groupedFeature).reindex(UID7Col.index).rename(newname)

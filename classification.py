@@ -33,7 +33,6 @@ def classifEval1row(testRow,trainData,trainResponse,clf):
 def classifEvalGroup(testGroup,trainData,trainResponse,clf):
     t0=time()
     ts = testGroup.iloc[0]["TIMESTAMP"]
-    print(trainData.shape)
     userows = trainData["TIMESTAMP"]<=ts-sevenDays
 
     print(trainData.loc[userows].shape)
@@ -49,8 +48,7 @@ def classifEvalGroup(testGroup,trainData,trainResponse,clf):
     
 def makePredictionGroup(testGroup,trainData, trainResponse, clf) :
     t0=time()
-    print(trainData.shape)
-    ts = testGroup["TIMESTAMP"]
+    ts = testGroup.iloc[0]["TIMESTAMP"]
     userows = trainData["TIMESTAMP"] <= ts - sevenDays
 
     clf.fit(trainData.loc[userows],trainResponse[userows])
@@ -68,7 +66,7 @@ def makePrediction(trainData, trainResponse, testData, clf) :
     print("Predicting on %d groups" % len(groups))
     pred = [pd.DataFrame(makePredictionGroup(g[1],trainData,trainResponse,clf)).set_index(g[1].index.values) for g in groups]
     print("Prediction Done. Concatenating...")
-    pred = pd.concat(pred).sort_index()
+    pred = pd.concat(pred).sort_index()[0]
     print("Concatenation done")
     
     delta=gmtime(time() - t0)
@@ -91,7 +89,7 @@ def looClfEval(trainData,trainResponse, clfPlusDescr,frac = 1, lbd=1,rs=0):
     print(trainData.loc[userows].sample(frac=frac,random_state=rs).shape)
     pred = trainData.loc[userows].sample(frac=frac,random_state=rs).apply(classifEval1row,axis=1,trainData=trainData,trainResponse=trainResponse,clf=clf).astype(float)
     err = pandasLinExEval(trainResponse.loc[userows],pred)
-    totalErr = err.sum()[0]
+    totalErr = err.sum()
     multErr, multErrPen = testTransforms(trainResponse.loc[userows],pred,lbd)
     
     delta=gmtime(time() - t0)
@@ -109,7 +107,7 @@ def looClfEval(trainData,trainResponse, clfPlusDescr,frac = 1, lbd=1,rs=0):
 
     return totalErr, multErr, multErrPen
 
-def groupedClfEval(trainData,trainResponse, clfPlusDescr,frac = 0.1, lbd=1,rs=0):
+def groupedClfEval(trainData,trainResponse, clfPlusDescr,frac = 0.1, lbd=1,rs=1):
     clf = clfPlusDescr[0]
     descr = str(clfPlusDescr[1])
     userows= trainData["TIMESTAMP"]>=minTestDate
@@ -122,12 +120,11 @@ def groupedClfEval(trainData,trainResponse, clfPlusDescr,frac = 0.1, lbd=1,rs=0)
     inds = np.random.choice(len(groups),size= math.floor(len(groups)*frac),replace=False)
     print("Selected %d groups to predict on" % len(inds)) 
 
-    pred = [pd.DataFrame(classifEvalGroup(g[1],trainData,trainResponse,clf)).set_index(g[1].index.values) for (i,g) in enumerate(groups) if i in inds]
-    print("Prediction Done. Concatenating...")
-    pred = pd.concat(pred).sort_index()
-    print("Concatenation done")
-    err = pandasLinExEval(trainResponse.ix[pred.index.values],pred)
-    totalErr = err.sum()[0]
+    pred =pd.concat( [pd.DataFrame(classifEvalGroup(g[1],trainData,trainResponse,clf)).set_index(g[1].index.values) for (i,g) in enumerate(groups) if i in inds]).sort_index()
+    pred=pred[0]    
+    print(pred.shape)
+    totalErr = pandasLinExEval(trainResponse.ix[pred.index.values],pred)
+
     multErr, multErrPen = testTransforms(trainResponse.ix[pred.index.values],pred,lbd)
     
     delta=gmtime(time() - t0)
@@ -135,9 +132,8 @@ def groupedClfEval(trainData,trainResponse, clfPlusDescr,frac = 0.1, lbd=1,rs=0)
     print("Evaluation step completed in :%s" % tstr)
     
     print("Evaluation error : %d" % totalErr)
-    print(err.describe())
     print("Expected values:")
-    print(str(trainResponse.loc[userows].describe()))
+    print(trainResponse.loc[userows].describe())
     print("Predicted values:")
     print(pred.describe())
     print("________________________________________________________________")
@@ -145,7 +141,7 @@ def groupedClfEval(trainData,trainResponse, clfPlusDescr,frac = 0.1, lbd=1,rs=0)
     return totalErr, multErr, multErrPen
     
     
-def customGridSearchCV(trainData, trainResponse, clf, argDict,frac=1,lbd=1,rs=0, method="group"):
+def customGridSearchCV(trainData, trainResponse, clf, argDict,frac=1,lbd=1,rs=0, method="noparall"):
     dicList = unravelDict(argDict)
     clfList = [(clone(clf),dic) for dic in dicList]    
     for i in range(len(clfList)) : 
@@ -155,14 +151,16 @@ def customGridSearchCV(trainData, trainResponse, clf, argDict,frac=1,lbd=1,rs=0,
     t0=time()
     print("Evaluating classifier for %d fits" % len(clfList))
     num_cores = multiprocessing.cpu_count()
-    if method == "loo":
+    if method == "noparall":
+        results = [groupedClfEval(trainData,trainResponse,cl,frac,lbd,rs) for cl in clfList]
+    elif method == "loo":
         results = Parallel(n_jobs=num_cores)(delayed(looClfEval)(trainData,trainResponse,cl,frac,lbd,rs) for cl in clfList)    
     else:
         results = Parallel(n_jobs=num_cores)(delayed(groupedClfEval)(trainData,trainResponse,cl,frac,lbd,rs) for cl in clfList)
         
     delta=gmtime(time() - t0)
     tstr=strftime('%H:%M:%S',delta)
-    
+    results= pd.Series(results)
     print("Full grid search completed in :%s" % tstr)    
     resBase = selectNthComp(results,0)
     resMult = selectNthComp(results,1)
@@ -217,7 +215,7 @@ def unravelDict(dictionary):
     
     
 def testTransforms(true,pred,lbd = 1) : 
-    ran = np.arange(0,10,0.1)
+    ran = np.arange(0,20,0.1)
     res = pd.DataFrame(np.nan, index = range(len(ran)), columns = ["Multm","Err","ErrPen"])
     i=0
     for mult in ran:
