@@ -7,7 +7,7 @@ Created on Mon Nov 21 09:31:39 2016
 """
 from datetime import datetime
 from pandas import read_csv, concat
-
+from time import gmtime,strftime,time
 import math
 
 import numpy as np
@@ -112,33 +112,48 @@ def getShift(dateTime) :
 def uniqueID(timestamp,assignment):
     return hash(str(timestamp)+assignment)
     
+# Evaluates the linEx error on a full pandas series
 def pandasLinExEval(y_true,y_pred):
     alpha=0.1
     return ((alpha*(y_true-y_pred)).apply(math.exp) - alpha*(y_true-y_pred) -1).sum()
     
+# Calculates linEx error on true and predicted value
 def linEx(true,pred):
     alpha=0.1
     return math.exp(alpha*(true-pred)) - alpha * (true - pred) -1
 
+# Select the Nth of each tuple in a series of tuple
 def selectNthComp(series,n):
     return series.apply(lambda x : x[n])
     
+# Return the year and position of previous month
 def previousMonth(year,month):
     if month == 1 : 
         return (year-1,12)
     else:
         return (year, month - 1)
         
-def truncatePred(y_true,y_pred):
+# Adjust prediction to true values zero-quantile
+def truncatePred(y_true,y_pred,margin=0.95):
     zFrac = y_true.value_counts()[0] / len(y_true)
     rep = y_pred
-    thresh = rep.quantile(zFrac)
+    thresh = rep.quantile(zFrac)*margin
     rep[rep < thresh] = 0
     return rep
     
+# Set negative predictions to zero
+def positivePred(y_pred):
+    y_pred[y_pred<0] = 0
+    return y_pred
     
+# Write dictionary to file
 def writeDict(dic,outfile):
     out= open(outfile,'w')
     towrite= str(dic)
     out.write(towrite)
     out.close()
+    
+def elapsedTimeString(t0):
+    delta=gmtime(time() - t0)
+    tstr=strftime('%H:%M:%S',delta)
+    return tstr

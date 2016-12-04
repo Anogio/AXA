@@ -5,7 +5,7 @@ Created on Tue Nov 22 17:44:13 2016
 
 @author: anog
 """
-from tools import sevenDays, minTestDate, pandasLinExEval, selectNthComp
+from tools import sevenDays, minTestDate, pandasLinExEval, selectNthComp, elapsedTimeString, positivePred
 from joblib import Parallel, delayed
 import multiprocessing
 import numpy as np
@@ -14,11 +14,10 @@ import math
 from sklearn.base import clone
 from time import time, gmtime, strftime
 
-
+#DEPRECATED: Predict on one train row
 def classifEval1row(testRow,trainData,trainResponse,clf):
     ts = testRow["TIMESTAMP"]
     testRow = testRow.reshape(1, -1) 
-#### Il faut peut-être juste soustraire six jours, je ne suis pas tout à fait sûr
     print('Select rows %d' % time())
     print(trainData.shape)
     userows = trainData["TIMESTAMP"]<=ts-sevenDays
@@ -30,9 +29,10 @@ def classifEval1row(testRow,trainData,trainResponse,clf):
     
     return pred
     
-def classifEvalGroup(testGroup,trainData,trainResponse,clf):
+#Predict on a group of train rows. Used for the grid search step
+def classifEvalGroup(testGroup,trainData,trainResponse,clf,tInit,i):
     t0=time()
-    ts = testGroup.iloc[0]["TIMESTAMP"]
+    ts = testGroup["TIMESTAMP"].min()
     userows = trainData["TIMESTAMP"]<=ts-sevenDays
 
     print(trainData.loc[userows].shape)
@@ -44,11 +44,15 @@ def classifEvalGroup(testGroup,trainData,trainResponse,clf):
     tstr=strftime('%H:%M:%S',delta)
     print("One group evaluated in :%s" % tstr)
     
+    if i%10==0 and i>0 : 
+        print("Time since beginning: %s" % elapsedTimeString(tInit))
+    
     return pred
     
+# Predict on a group of test rows. used for the prediction step
 def makePredictionGroup(testGroup,trainData, trainResponse, clf) :
     t0=time()
-    ts = testGroup.iloc[0]["TIMESTAMP"]
+    ts = testGroup["TIMESTAMP"].min()
     userows = trainData["TIMESTAMP"] <= ts - sevenDays
 
     clf.fit(trainData.loc[userows],trainResponse[userows])
@@ -59,10 +63,13 @@ def makePredictionGroup(testGroup,trainData, trainResponse, clf) :
     
     return clf.predict(testGroup)
     
-    
-def makePrediction(trainData, trainResponse, testData, clf) :
+# Group test data then make full prediction
+def makePrediction(trainData, trainResponse, testData, clf,groupByTS=False) :
     t0=time()
-    groups = testData.groupby("TIMESTAMP")
+    if groupByTS:
+        groups = testData.groupby("TIMESTAMP")
+    else:
+        groups = testData.groupby(["YEAR","MONTH","DAY"])
     print("Predicting on %d groups" % len(groups))
     pred = [pd.DataFrame(makePredictionGroup(g[1],trainData,trainResponse,clf)).set_index(g[1].index.values) for g in groups]
     print("Prediction Done. Concatenating...")
@@ -77,6 +84,7 @@ def makePrediction(trainData, trainResponse, testData, clf) :
     print(pred.describe())
     return pred
     
+# Evaluate classifier through row by row prediction
 def looClfEval(trainData,trainResponse, clfPlusDescr,frac = 1, lbd=1,rs=0):
     
     clf = clfPlusDescr[0]
@@ -90,7 +98,7 @@ def looClfEval(trainData,trainResponse, clfPlusDescr,frac = 1, lbd=1,rs=0):
     pred = trainData.loc[userows].sample(frac=frac,random_state=rs).apply(classifEval1row,axis=1,trainData=trainData,trainResponse=trainResponse,clf=clf).astype(float)
     err = pandasLinExEval(trainResponse.loc[userows],pred)
     totalErr = err.sum()
-    multErr, multErrPen = testTransforms(trainResponse.loc[userows],pred,lbd)
+    multErr, multErrPen, expErr = testTransforms(trainResponse.loc[userows],pred,lbd)
     
     delta=gmtime(time() - t0)
     tstr=strftime('%H:%M:%S',delta)
@@ -105,9 +113,10 @@ def looClfEval(trainData,trainResponse, clfPlusDescr,frac = 1, lbd=1,rs=0):
     print(pred.describe())
     print("________________________________________________________________")
 
-    return totalErr, multErr, multErrPen
+    return totalErr, multErr, multErrPen, expErr
 
-def groupedClfEval(trainData,trainResponse, clfPlusDescr,frac = 0.1, lbd=1,rs=1):
+# Evaluate classifier by predicting on data grouped by day
+def groupedClfEval(trainData,trainResponse, clfPlusDescr,t0,frac = 0.1, lbd=1,rs=1):
     clf = clfPlusDescr[0]
     descr = str(clfPlusDescr[1])
     userows= trainData["TIMESTAMP"]>=minTestDate
@@ -120,12 +129,12 @@ def groupedClfEval(trainData,trainResponse, clfPlusDescr,frac = 0.1, lbd=1,rs=1)
     inds = np.random.choice(len(groups),size= math.floor(len(groups)*frac),replace=False)
     print("Selected %d groups to predict on" % len(inds)) 
 
-    pred =pd.concat( [pd.DataFrame(classifEvalGroup(g[1],trainData,trainResponse,clf)).set_index(g[1].index.values) for (i,g) in enumerate(groups) if i in inds]).sort_index()
+    pred =pd.concat( [pd.DataFrame(classifEvalGroup(g[1],trainData,trainResponse,clf,t0,i)).set_index(g[1].index.values) for (i,g) in enumerate(groups) if i in inds]).sort_index()
     pred=pred[0]    
     print(pred.shape)
     totalErr = pandasLinExEval(trainResponse.ix[pred.index.values],pred)
 
-    multErr, multErrPen = testTransforms(trainResponse.ix[pred.index.values],pred,lbd)
+    multErr, multErrPen, expErr = testTransforms(trainResponse.ix[pred.index.values],positivePred(pred),lbd)
     
     delta=gmtime(time() - t0)
     tstr=strftime('%H:%M:%S',delta)
@@ -138,10 +147,11 @@ def groupedClfEval(trainData,trainResponse, clfPlusDescr,frac = 0.1, lbd=1,rs=1)
     print(pred.describe())
     print("________________________________________________________________")
 
-    return totalErr, multErr, multErrPen
+    return totalErr, multErr, multErrPen, expErr
     
-    
-def customGridSearchCV(trainData, trainResponse, clf, argDict,frac=1,lbd=1,rs=0, method="noparall"):
+# Test multiple classifiers to determine which one yields best predictions
+# Also determine the best transformation on the prediction to improve precision
+def customGridSearchCV(trainData, trainResponse, clf, argDict,tInit,frac=1,lbd=1,rs=0, method="noparall"):
     dicList = unravelDict(argDict)
     clfList = [(clone(clf),dic) for dic in dicList]    
     for i in range(len(clfList)) : 
@@ -152,11 +162,11 @@ def customGridSearchCV(trainData, trainResponse, clf, argDict,frac=1,lbd=1,rs=0,
     print("Evaluating classifier for %d fits" % len(clfList))
     num_cores = multiprocessing.cpu_count()
     if method == "noparall":
-        results = [groupedClfEval(trainData,trainResponse,cl,frac,lbd,rs) for cl in clfList]
+        results = [groupedClfEval(trainData,trainResponse,cl,tInit,frac,lbd,rs) for cl in clfList]
     elif method == "loo":
         results = Parallel(n_jobs=num_cores)(delayed(looClfEval)(trainData,trainResponse,cl,frac,lbd,rs) for cl in clfList)    
     else:
-        results = Parallel(n_jobs=num_cores)(delayed(groupedClfEval)(trainData,trainResponse,cl,frac,lbd,rs) for cl in clfList)
+        results = Parallel(n_jobs=num_cores)(delayed(groupedClfEval)(trainData,trainResponse,cl,tInit,frac,lbd,rs) for cl in clfList)
         
     delta=gmtime(time() - t0)
     tstr=strftime('%H:%M:%S',delta)
@@ -165,20 +175,27 @@ def customGridSearchCV(trainData, trainResponse, clf, argDict,frac=1,lbd=1,rs=0,
     resBase = selectNthComp(results,0)
     resMult = selectNthComp(results,1)
     resMultPen = selectNthComp(results,2)
+    resExp = selectNthComp(results,3)
     resMultCoeff = selectNthComp(resMult,0)
     resMultScore = selectNthComp(resMult,1)
     resMultPenCoeff = selectNthComp(resMultPen,0)
-    resMultPenScore = selectNthComp(resMultPen,1)  
+    resMultPenScore = selectNthComp(resMultPen,1)
+    resExpCoeff = selectNthComp(resExp,0)
+    resExpScore = selectNthComp(resExp,1)
     
     minIndBase = resBase.argmin()
     minIndMult = resMultScore.argmin()
-    minIndMultPen = resMultPenScore.argmin()    
+    minIndMultPen = resMultPenScore.argmin()
+    minIndExp = resExpScore.argmin()
     minCoeffMult =resMultCoeff[minIndMult]
-    minCoeffMultPen = resMultPenCoeff[minIndMultPen]   
+    minCoeffMultPen = resMultPenCoeff[minIndMultPen]
+    minCoeffExp = resExpCoeff[minIndExp]
+    
  
     bestArgsBase = dicList[minIndBase]
     bestArgsMult = dicList[minIndMult]
     bestArgsMultPen = dicList[minIndMultPen]
+    bestArgsExp = dicList[minIndExp]
 
     print("Best parameters for classifier:")
     print(bestArgsBase)
@@ -190,11 +207,17 @@ def customGridSearchCV(trainData, trainResponse, clf, argDict,frac=1,lbd=1,rs=0,
     print(bestArgsMultPen)
     print("Best multiplier with penalization")
     print(minCoeffMultPen)    
+    print("Best parameters with multiplier and penalized coefficients")
+    print(bestArgsExp)
+    print("Best multiplier with exponential correction")
+    print(minCoeffExp)
     
     bestClfBase = clone(clf).set_params(**bestArgsBase)
     bestClfMult = clone(clf).set_params(**bestArgsMult)
     bestClfMultPen = clone(clf).set_params(**bestArgsMultPen)    
-    return bestClfBase , (bestClfMult,minCoeffMult), (bestClfMultPen,minCoeffMultPen)
+    bestClfExp = clone(clf).set_params(**bestArgsExp)
+    return bestClfBase , (bestClfMult,minCoeffMult), (bestClfMultPen,minCoeffMultPen) , (bestClfExp, minCoeffExp)
+
 
 def unravelDictAux(dictionary, acc):
     if dictionary =={} :
@@ -209,11 +232,11 @@ def unravelDictAux(dictionary, acc):
             
     return unravelDictAux(dictionary,temp)
     ()
-#Creates list of all possible conbinations of keys
+# Creates list of all possible conbinations of keys in a dicitonary of lists
 def unravelDict(dictionary):
     return unravelDictAux(dictionary.copy(),[{}])
     
-    
+# Apply multiplicative and exponential transforms to the data to try to make it match the shape of the output better
 def testTransforms(true,pred,lbd = 1) : 
     ran = np.arange(0,20,0.1)
     res = pd.DataFrame(np.nan, index = range(len(ran)), columns = ["Multm","Err","ErrPen"])
@@ -226,11 +249,26 @@ def testTransforms(true,pred,lbd = 1) :
             i+=1
     m = res["Err"].argmin()
     mPen = res["ErrPen"].argmin()
-    
     resm = res.ix[m]
     resmPen = res.ix[mPen]
     
-    return (resm["Multm"], resm["Err"]) , (resmPen["Multm"],resmPen["ErrPen"])
+    ran = np.arange(0,1,0.01)
+    res = pd.DataFrame(np.nan, index = range(len(ran)), columns = ["Expm","Err"])
+    
+    for ex in ran:
+        try:
+            pred2 = (ex*pred).apply(math.exp)
+            err = pandasLinExEval(true,pred2)
+        except:
+            err = np.inf
+        res.ix[i] = [ex,err]        
+        
+    exp = res["Err"].argmin()
+    resexp = res.ix[exp]
+    
+
+    
+    return (resm["Multm"], resm["Err"]) , (resmPen["Multm"],resmPen["ErrPen"]) , (resexp["Expm"],resexp["Err"])
     
     
     

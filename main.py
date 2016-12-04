@@ -8,19 +8,28 @@ Created on Mon Nov 21 19:33:07 2016
 import pandas as pd
 import numpy as np
 import gc
+import math
 
-from tools import importTrainData, importTestData , truncatePred
+from tools import importTrainData, importTestData , truncatePred, positivePred, elapsedTimeString
 from trainFeatureEngineering import returnID, returnDayMinusSevenID
 from testFeatureEngineering import makeDateFeatures, makeDirFeature, makeDayMinusSevenID
 from generalFeatureEngineering import returnDateDF, returnLastWeekFeatureVect
 from sklearn.ensemble import RandomForestRegressor
 from classification import customGridSearchCV, makePrediction
 from xgboost import XGBRegressor
+from time import time
 
-nrows= 3 * 10**6
+nrows= 40 * 10**5
+#nrows = 50000
 buildUID = True
-CVTrainFrac = 0.3
+CVTrainFrac = 0.1
+currentBestPar = {'colsample_bytree': 0.7, 'reg_alpha': 0, 'subsample': 0.7, 'reg_lambda': 0, 'gamma': 0, 'max_depth': 6}
+currentBestParCV = {'colsample_bytree': [0.7], 'reg_alpha': [0], 'subsample': [0.7], 'reg_lambda': [0], 'gamma': [0], 'max_depth': [6]}
+currentBestMult = 6.1
+currentBestMultPen = 4.9
+gridSearch = False
 
+t0 = time()
 # Import data
 print("Importing data")
 train = importTrainData(nrows,quick=False)
@@ -94,23 +103,33 @@ train.drop(toRemove, inplace= True, axis = 1)
 print(train.shape)
 print(test.shape)
 
-clf = XGBRegressor()
-param = {
-             "max_depth":[6],
-             "gamma":[0,0.5],
-             "subsample":[0.7],
-             "colsample_bytree":[0.7],
-             "reg_alpha":[0,0.5],
-             "reg_lambda":[0]
-         }
+print("Time since beginning: %s" % elapsedTimeString(t0))
 
+clf = XGBRegressor()
+if gridSearch:
+    param = {
+                 "max_depth":[6],
+                 "gamma":[0,0.5],
+                 "subsample":[0.7],
+                 "colsample_bytree":[0.7],
+                 "reg_alpha":[0,0.5],
+                 "reg_lambda":[0]
+             }
+    
+else:
+    param = currentBestParCV
+    
 print("Performing grid search")
-CVResults = customGridSearchCV(train,y,clf,param,frac=CVTrainFrac,rs=1,lbd=1.5)
+CVResults = customGridSearchCV(train,y,clf,param,frac=CVTrainFrac,rs=1,lbd=1.5,tInit=t0)
 bestClfBase = CVResults[0]
-bestClfMult = CVResults[1][0]
+#bestClfMult = CVResults[1][0]
 MultCoeff = CVResults[1][1]
-bestClfMultPen = CVResults[2][0]
+#bestClfMultPen = CVResults[2][0]
 MultPenCoeff = CVResults[2][1]
+#bestClfExp  = CVResults[3][0]
+ExpCoeff = CVResults[3][1]
+
+print("Time since beginning: %s" % elapsedTimeString(t0))
 
 print("Making final submission")
 submission = importTestData()
@@ -118,24 +137,32 @@ submission = importTestData()
 
 print("Predicting")
 predBase = makePrediction(train,y,test,bestClfBase)
+predBase= positivePred(predBase)
 submission["prediction"]=predBase
 submission.to_csv("newSubmission.txt",sep="\t")
 submission["prediction"] = truncatePred(y,predBase)
 submission.to_csv("newSubmissionTrunc.txt",sep="\t")
-del predBase
 
-print("Predicting with multiplier")
-predMult = MultCoeff * makePrediction(train,y,test,bestClfMult)
+predMult = MultCoeff * predBase
 submission["prediction"]=predMult
 submission.to_csv("newSubmissionMult.txt",sep="\t")
 submission["prediction"] = truncatePred(y,predMult)
-submission.to_csv("newSubmissionTrunc.txt",sep="\t")
+submission.to_csv("newSubmissionMultTrunc.txt",sep="\t")
 del predMult
 
 print("Predicting with multiplier and penalization")
-predMultPen =MultPenCoeff *  makePrediction(train,y,test,bestClfMultPen)
+predMultPen =MultPenCoeff *  predBase
 submission["prediction"]=predMultPen
 submission.to_csv("newSubmissionMultPen.txt",sep="\t")
 submission["prediction"] = truncatePred(y,predMultPen)
-submission.to_csv("newSubmissionTrunc.txt",sep="\t")
+submission.to_csv("newSubmissionMultPenTrunc.txt",sep="\t")
+
+print("Predicting with exponential correction")
+predMultPen =  (ExpCoeff * predBase).apply(math.exp)
+submission["prediction"]=predMultPen
+submission.to_csv("newSubmissionExp.txt",sep="\t")
+submission["prediction"] = truncatePred(y,predMultPen)
+submission.to_csv("newSubmissionExpTrunc.txt",sep="\t")
 print("Done")
+
+print("Time since beginning: %s" % elapsedTimeString(t0))
