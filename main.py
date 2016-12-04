@@ -139,30 +139,30 @@ print("Predicting")
 predBase = makePrediction(train,y,test,bestClfBase)
 predBase= positivePred(predBase)
 submission["prediction"]=predBase
-submission.to_csv("newSubmission.txt",sep="\t")
+submission.to_csv("newSubmission.txt",sep="\t",index=False)
 submission["prediction"] = truncatePred(y,predBase)
-submission.to_csv("newSubmissionTrunc.txt",sep="\t")
+submission.to_csv("newSubmissionTrunc.txt",sep="\t",index=False)
 
 predMult = MultCoeff * predBase
 submission["prediction"]=predMult
-submission.to_csv("newSubmissionMult.txt",sep="\t")
+submission.to_csv("newSubmissionMult.txt",sep="\t",index=False)
 submission["prediction"] = truncatePred(y,predMult)
-submission.to_csv("newSubmissionMultTrunc.txt",sep="\t")
+submission.to_csv("newSubmissionMultTrunc.txt",sep="\t",index=False)
 del predMult
 
 print("Predicting with multiplier and penalization")
 predMultPen =MultPenCoeff *  predBase
 submission["prediction"]=predMultPen
-submission.to_csv("newSubmissionMultPen.txt",sep="\t")
+submission.to_csv("newSubmissionMultPen.txt",sep="\t",index=False)
 submission["prediction"] = truncatePred(y,predMultPen)
-submission.to_csv("newSubmissionMultPenTrunc.txt",sep="\t")
+submission.to_csv("newSubmissionMultPenTrunc.txt",sep="\t",index=False)
 
 print("Predicting with exponential correction")
 predMultPen =  (ExpCoeff * predBase).apply(math.exp)
 submission["prediction"]=predMultPen
-submission.to_csv("newSubmissionExp.txt",sep="\t")
+submission.to_csv("newSubmissionExp.txt",sep="\t",index=False)
 submission["prediction"] = truncatePred(y,predMultPen)
-submission.to_csv("newSubmissionExpTrunc.txt",sep="\t")
+submission.to_csv("newSubmissionExpTrunc.txt",sep="\t",index=False)
 print("Done")
 
 print("Time since beginning: %s" % elapsedTimeString(t0))
